@@ -1,4 +1,5 @@
 ---
+license: GPL-3.0-or-later
 name: zotero-manager
 description: |
   Zotero 文献库管理：通过本地 MCP server `zotero-local` 做检索、去重合并、分类归属调整、备份与审计。当用户提到 Zotero、文献库、去重、重复条目、合并条目、分类调整、批量入库、BibTeX 导出、全文读取时触发。所有写操作走两阶段确认（prepare → commit）并留哈希链审计。
