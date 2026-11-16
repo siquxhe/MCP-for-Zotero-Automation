@@ -1,0 +1,17 @@
+# 本地状态与审计（含本机路径、令牌、操作历史，不应提交）
+*.log
+*.jsonl
+zotero-pending.json
+zotero-write-auth.json
+zotero-write-key.json
+zotero-server-id.json
+
+# 备份的 Zotero 数据库
+*.sqlite
+*.sqlite-wal
+*.sqlite-shm
+backups/
+
+# 系统文件
+.DS_Store
+Thumbs.db

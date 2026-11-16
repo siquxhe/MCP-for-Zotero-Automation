@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "zotero-local": {
+      "command": "node",
+      "args": ["C:/absolute/path/to/zotero-mcp.js"],
+      "env": {
+        "ZOTERO_MCP_BASE_URL": "http://127.0.0.1:23119"
+      }
+    }
+  }
+}
