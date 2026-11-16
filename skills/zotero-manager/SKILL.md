@@ -8,14 +8,13 @@ description: |
 
 # Zotero 文献库管理
 
-通过 MCP server `zotero-local` 操作本机 Zotero 10+。服务端脚本：
-`C:\Users\sunrise\.workbuddy\scripts\zotero-mcp.js`，配置：`~\.workbuddy\mcp.json`。
+通过 MCP server `zotero-local` 操作本机 Zotero 10+。服务端脚本位于用户级 `~/.workbuddy/scripts/zotero-mcp.js`（Windows：`%USERPROFILE%\.workbuddy\scripts\zotero-mcp.js`），配置在 `~/.workbuddy/mcp.json`（脚本路径以该文件实际注册值为准）。
 启动会话后工具以 `mcp__zotero-local__<name>` 形式出现；若看不到新工具，重启会话或重新 Trust 连接器。
 
 ## 铁律（违反即停止）
 
 1. **写操作必须两阶段**：先 `prepare_*` 生成计划与 payloadHash，**把计划展示给用户并取得明确同意**，再 `commit_*`。三项必填：`token`、严格等于 `CONFIRM:<token>` 的 `confirmPhrase`、同一 `payloadHash`。缺一即拒，并记入审计。
-2. **写前先备份**：任何删除/合并/改归属之前，复制 `C:\Users\sunrise\Zotero\` 下的 `zotero.sqlite`、`zotero.sqlite-wal`、`zotero.sqlite-shm` 三个文件到备份目录。Zotero 处于 WAL 模式，只拷 `.sqlite` 会丢数据。用 Python sqlite3 打开三文件副本做 `integrity_check` 验证。
+2. **写前先备份**：任何删除/合并/改归属之前，先定位 Zotero 数据目录（默认 `~/Zotero/`，Windows `%USERPROFILE%\Zotero\`；若改过，以 Zotero 设置 → 高级 → 数据和文件夹 中显示的实际路径为准），复制其中 `zotero.sqlite`、`zotero.sqlite-wal`、`zotero.sqlite-shm` 三个文件到备份目录。Zotero 处于 WAL 模式，只拷 `.sqlite` 会丢数据。用 Python sqlite3 打开三文件副本做 `integrity_check` 验证。
 3. **删除不可逆**：Zotero 10 本地 API 的 `DELETE` 是**直接删除**，不进回收站。合并/删条目/删分类都不可从 UI 撤销，只能靠备份恢复。
 4. **不擅自做删除性操作**：用户说"去重""合并分类"时，先澄清是条目合并还是分类合并——两者不同。合并分类不减少重复。
 5. **核对后再合并**：`find_duplicates` 的分组按 DOI 和规范化标题，**不是语义判重**。标题匹配会误判（曾把 Tang 2019 配到无关 PDF 附件）。合并前逐组核对标题与作者。
@@ -101,4 +100,4 @@ description: |
 
 - 操作审计：`~\.workbuddy\zotero-write-audit.jsonl`（导入/删除/授权）与 `~\.workbuddy\zotero-merge-audit.jsonl`（合并）、`~\.workbuddy\zotero-reassign-audit.jsonl`（改归属）。均为 append-only JSONL，链式 SHA-256，`zotero_audit` 可校验。
 - 待确认令牌：`~\.workbuddy\zotero-pending.json`，10 分钟 TTL，一次性。
-- 备份目录：工作区 `.workbuddy/backups/`，命名含操作类型与时间戳。回滚需**先关闭 Zotero**，再用备份的三个文件覆盖 `C:\Users\sunrise\Zotero\` 下同名文件。
+- 备份目录：工作区 `.workbuddy/backups/`，命名含操作类型与时间戳。回滚需**先关闭 Zotero**，再用备份的三个文件覆盖 Zotero 数据目录（见铁律 2 的路径定位）下同名文件。
