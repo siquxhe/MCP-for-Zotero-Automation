@@ -1,4 +1,7 @@
-# MCP for Zotero Automation
+# MCP-for-Zotero-Automation
+A MCP Server for Automated Zotero Control
+
+---
 
 Zotero 本地自动化工具集：一个零依赖的 MCP server（25 个工具）+ 一个配套 Agent skill，让 AI Agent 能安全地检索、批量入库、去重合并、调整分类归属，并全程留审计。
 
@@ -15,7 +18,7 @@ Zotero 本地自动化工具集：一个零依赖的 MCP server（25 个工具�
 ├── skills/zotero-manager/
 │   └── SKILL.md             # 配套 Agent skill：工作流 + 安全铁律
 ├── mcp.json.example         # MCP 配置示例
-├── LICENSE                  # MIT
+├── LICENSE                  # GPL-3.0
 └── README.md
 ```
 
@@ -87,4 +90,4 @@ Zotero 本地自动化工具集：一个零依赖的 MCP server（25 个工具�
 
 ## License
 
-MIT — 见 [LICENSE](LICENSE)。
+GPL-3.0 — 见 [LICENSE](LICENSE)。许可协议沿用仓库初始化时的选择；若需改为 MIT 或其他许可，请更新 LICENSE 文件。
