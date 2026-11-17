@@ -222,6 +222,42 @@ const TOOLS = [
       ['confirmPhrase', 'string', '必须严格等于 CONFIRM:<token>'],
       ['payloadHash', 'string', 'prepare 返回的内容哈希']
     ], ['token', 'confirmPhrase', 'payloadHash'])
+  },
+  {
+    name: 'zotero_prepare_create_collection',
+    description: '写前预演新建分类（单次最多 50 个）：校验名称非空、父分类 key 有效且存在、同级无同名分类。绝不写库。',
+    inputSchema: schema([
+      ['collections', 'array', '待建分类数组，每项 {name:string, parentCollection?:8位key或false}，parentCollection 省略或 false 表示顶级'],
+      ['note', 'string', '可选：说明']
+    ], ['collections'])
+  },
+  {
+    name: 'zotero_commit_create_collection',
+    description: '执行新建分类：需 prepare 的 token、CONFIRM:<token> 与同一 payloadHash。POST /collections + 一次性写令牌，返回每个新分类的 key。',
+    inputSchema: schema([
+      ['token', 'string', 'prepare 返回的令牌'],
+      ['confirmPhrase', 'string', '必须严格等于 CONFIRM:<token>'],
+      ['payloadHash', 'string', 'prepare 返回的内容哈希']
+    ], ['token', 'confirmPhrase', 'payloadHash'])
+  },
+  {
+    name: 'zotero_prepare_update_collection',
+    description: '写前预演修改分类（重命名和/或移动父分类）：读取当前 name/parentCollection/version，校验新父分类存在且不能把父分类设为自身或自己的后代。绝不写库。',
+    inputSchema: schema([
+      ['key', 'string', '待修改分类 8 位 key'],
+      ['name', 'string', '可选：新名称（不提供则不变）'],
+      ['parentCollection', 'string', '可选：新父分类 8 位 key；传 false 表示移到顶级。不提供则不变'],
+      ['note', 'string', '可选：说明']
+    ], ['key'])
+  },
+  {
+    name: 'zotero_commit_update_collection',
+    description: '执行修改分类：需 prepare 的 token、CONFIRM:<token> 与同一 payloadHash。PATCH /collections/<key> 带 version 前置条件，返回修改后状态。',
+    inputSchema: schema([
+      ['token', 'string', 'prepare 返回的令牌'],
+      ['confirmPhrase', 'string', '必须严格等于 CONFIRM:<token>'],
+      ['payloadHash', 'string', 'prepare 返回的内容哈希']
+    ], ['token', 'confirmPhrase', 'payloadHash'])
   }
 ];
 
@@ -1258,6 +1294,174 @@ async function callTool(name, args) {
       consumeToken(pending, a.token, auth);
       const seq = appendAudit('delete_collection', { key: op.payload.key, name: op.payload.name });
       return { status: 'collection_deleted', key: op.payload.key, name: op.payload.name, auditSeq: seq };
+    }
+
+    case 'zotero_prepare_create_collection': {
+      const list = a.collections;
+      if (!Array.isArray(list) || list.length < 1) throw new Error('collections 必须是非空数组');
+      if (list.length > 50) throw new Error('单次最多新建 50 个分类');
+      const allColls = (await get(prefix + '/collections?limit=100')).data || [];
+      const existingByKey = new Map(allColls.map((c) => [c.key, c]));
+      const siblingNames = new Map();
+      const normalized = [];
+      for (let i = 0; i < list.length; i++) {
+        const c = list[i];
+        if (!isItemShape(c)) throw new Error('第 ' + (i + 1) + ' 项必须是对象');
+        if (typeof c.name !== 'string' || !c.name.trim()) throw new Error('第 ' + (i + 1) + ' 项 name 必须是非空字符串');
+        const name = c.name.trim();
+        let parent = false;
+        if (c.parentCollection !== undefined && c.parentCollection !== false && c.parentCollection !== null) {
+          if (typeof c.parentCollection !== 'string' || !KEY_RE.test(c.parentCollection)) {
+            throw new Error('第 ' + (i + 1) + ' 项 parentCollection 必须是 8 位 key 或 false');
+          }
+          parent = c.parentCollection;
+        }
+        if (parent && !existingByKey.has(parent)) throw new Error('第 ' + (i + 1) + ' 项的父分类 ' + parent + ' 不存在');
+        const sibKey = parent || 'TOP';
+        const sibSet = siblingNames.get(sibKey) || new Set(
+          allColls.filter((x) => ((x.data.parentCollection || false) === parent)).map((x) => String(x.data.name || '').toLowerCase())
+        );
+        if (sibSet.has(name.toLowerCase())) throw new Error('同级已存在同名分类「' + name + '」，拒绝重复创建');
+        sibSet.add(name.toLowerCase());
+        siblingNames.set(sibKey, sibSet);
+        normalized.push({ name, parentCollection: parent });
+      }
+      const payload = { collections: normalized, note: typeof a.note === 'string' ? a.note.slice(0, 300) : '' };
+      const payloadHash = sha256(stableStringify(payload));
+      const token = crypto.randomBytes(16).toString('hex');
+      const now = Date.now();
+      const pending = loadPending();
+      pending[token] = {
+        createdAt: new Date(now).toISOString(),
+        expiresAt: new Date(now + TOKEN_TTL_MS).toISOString(),
+        payloadHash, payload, kind: 'create_collection'
+      };
+      writeJson(PENDING_FILE, pending);
+      appendAudit('prepare_create_collection', { token, payloadHash, count: normalized.length, note: payload.note });
+      return {
+        status: 'prepared_create_collection', token, payloadHash,
+        expiresAt: pending[token].expiresAt,
+        collections: normalized, count: normalized.length,
+        nextStep: '展示并取得同意后调用 zotero_commit_create_collection，参数：token=' + token + '、confirmPhrase=CONFIRM:' + token + '、payloadHash=' + payloadHash + '。'
+      };
+    }
+
+    case 'zotero_commit_create_collection': {
+      const pending = loadPending();
+      const { op, auth } = confirmOp(a.token, a.confirmPhrase, a.payloadHash, pending, 'create_collection');
+      const serverId = await fetchServerId();
+      requireServerMatch(auth, serverId);
+      const writeToken = crypto.randomBytes(16).toString('hex');
+      const headers = Object.assign(
+        { 'Content-Type': 'application/json', 'Zotero-API-Key': auth.key, 'Zotero-Server-ID': serverId, 'Zotero-Write-Token': writeToken },
+        null
+      );
+      const res = await request('POST', prefix + '/collections', op.payload.collections, headers);
+      if (res.status !== 200) throw httpError(res.status, res.raw);
+      const result = res.data || {};
+      const failed = result.failed || {};
+      if (Object.keys(failed).length) throw new Error('部分分类创建失败：' + JSON.stringify(failed).slice(0, 300));
+      const successful = result.successful || {};
+      const created = Object.keys(successful).map((idx) => {
+        const obj = successful[idx] || {};
+        const requested = op.payload.collections[Number(idx)] || {};
+        return {
+          key: obj.key || null,
+          name: obj.name || requested.name || null,
+          parentCollection: obj.parentCollection || requested.parentCollection || false
+        };
+      });
+      consumeToken(pending, a.token, auth);
+      const seq = appendAudit('create_collection', { count: created.length, keys: created.map((c) => c.key), note: op.payload.note });
+      return { status: 'collections_created', created, count: created.length, auditSeq: seq };
+    }
+
+    case 'zotero_prepare_update_collection': {
+      if (!KEY_RE.test(a.key || '')) throw new Error('key 必须是 8 位大写分类 key');
+      if (a.name === undefined && a.parentCollection === undefined) {
+        throw new Error('至少要提供 name 或 parentCollection 之一');
+      }
+      const res = await get(prefix + '/collections/' + encodeURIComponent(a.key));
+      const cur = res.data.data || {};
+      const curName = cur.name || '';
+      const curParent = cur.parentCollection || false;
+      const version = res.data.version;
+      let newName = curName;
+      let newParent = curParent;
+      if (a.name !== undefined) {
+        if (typeof a.name !== 'string' || !a.name.trim()) throw new Error('name 必须是非空字符串');
+        newName = a.name.trim();
+      }
+      if (a.parentCollection !== undefined) {
+        if (a.parentCollection === false || a.parentCollection === null || a.parentCollection === '') {
+          newParent = false;
+        } else if (typeof a.parentCollection === 'string' && KEY_RE.test(a.parentCollection)) {
+          newParent = a.parentCollection;
+        } else {
+          throw new Error('parentCollection 必须是 8 位 key 或 false');
+        }
+      }
+      if (newName === curName && newParent === curParent) throw new Error('没有实际变更（名称与父分类均与当前相同）');
+      const allColls = (await get(prefix + '/collections?limit=100')).data || [];
+      const byKey = new Map(allColls.map((c) => [c.key, c]));
+      if (newParent) {
+        if (!byKey.has(newParent)) throw new Error('新父分类 ' + newParent + ' 不存在');
+        if (newParent === a.key) throw new Error('不能把分类设为自己的父分类');
+        let cursor = newParent;
+        const seen = new Set();
+        while (cursor && !seen.has(cursor)) {
+          seen.add(cursor);
+          if (cursor === a.key) throw new Error('不能把分类移到自己的后代之下（会形成循环）');
+          const p = (byKey.get(cursor) || {}).data || {};
+          cursor = p.parentCollection || false;
+        }
+      }
+      const nameClash = allColls.some((c) => c.key !== a.key &&
+        ((c.data.parentCollection || false) === newParent) &&
+        String(c.data.name || '').toLowerCase() === newName.toLowerCase());
+      if (nameClash) throw new Error('同级已存在同名分类「' + newName + '」，拒绝重命名');
+      const payload = {
+        key: a.key, version, name: newName, parentCollection: newParent,
+        current: { name: curName, parentCollection: curParent },
+        note: typeof a.note === 'string' ? a.note.slice(0, 300) : ''
+      };
+      const payloadHash = sha256(stableStringify(payload));
+      const token = crypto.randomBytes(16).toString('hex');
+      const now = Date.now();
+      const pending = loadPending();
+      pending[token] = {
+        createdAt: new Date(now).toISOString(),
+        expiresAt: new Date(now + TOKEN_TTL_MS).toISOString(),
+        payloadHash, payload, kind: 'update_collection'
+      };
+      writeJson(PENDING_FILE, pending);
+      appendAudit('prepare_update_collection', { token, payloadHash, key: a.key, name: newName, parentCollection: newParent });
+      return {
+        status: 'prepared_update_collection', token, payloadHash,
+        expiresAt: pending[token].expiresAt,
+        key: a.key, version,
+        current: payload.current,
+        proposed: { name: newName, parentCollection: newParent },
+        nextStep: '展示并取得同意后调用 zotero_commit_update_collection，参数：token=' + token + '、confirmPhrase=CONFIRM:' + token + '、payloadHash=' + payloadHash + '。'
+      };
+    }
+
+    case 'zotero_commit_update_collection': {
+      const pending = loadPending();
+      const { op, auth } = confirmOp(a.token, a.confirmPhrase, a.payloadHash, pending, 'update_collection');
+      const serverId = await fetchServerId();
+      requireServerMatch(auth, serverId);
+      const p = op.payload;
+      const headers = Object.assign(
+        { 'Content-Type': 'application/json', 'Zotero-API-Key': auth.key, 'Zotero-Server-ID': serverId },
+        { 'If-Unmodified-Since-Version': String(p.version) }
+      );
+      const body = { key: p.key, version: p.version, name: p.name, parentCollection: p.parentCollection };
+      const res = await request('PATCH', prefix + '/collections/' + encodeURIComponent(p.key), body, headers);
+      if (res.status !== 200 && res.status !== 204) throw httpError(res.status, res.raw);
+      consumeToken(pending, a.token, auth);
+      const seq = appendAudit('update_collection', { key: p.key, from: p.current, to: { name: p.name, parentCollection: p.parentCollection }, note: p.note });
+      return { status: 'collection_updated', key: p.key, name: p.name, parentCollection: p.parentCollection, auditSeq: seq };
     }
 
     default:

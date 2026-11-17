@@ -3,7 +3,7 @@ A MCP Server for Automated Zotero Control
 
 ---
 
-Zotero 本地自动化工具集：一个零依赖的 MCP server（25 个工具）+ 一个配套 Agent skill，让 AI Agent 能安全地检索、批量入库、去重合并、调整分类归属，并全程留审计。
+Zotero 本地自动化工具集：一个零依赖的 MCP server（29 个工具）+ 一个配套 Agent skill，让 AI Agent 能安全地检索、批量入库、去重合并、调整分类归属，并全程留审计。
 
 针对 **Zotero 10+** 的本地 API（`http://127.0.0.1:23119`）设计。不需要 Zotero 插件，不需要 API key（写授权由 Zotero 弹窗给出）。
 
@@ -12,7 +12,7 @@ Zotero 本地自动化工具集：一个零依赖的 MCP server（25 个工具�
 ```
 .
 ├── scripts/
-│   ├── zotero-mcp.js        # 主 MCP server，25 个工具（stdio 协议）
+│   ├── zotero-mcp.js        # 主 MCP server，29 个工具（stdio 协议）
 │   ├── zotero-merge.js      # 独立批量合并工具（备用）
 │   └── zotero-reassign.js   # 独立分类归属调整工具（备用）
 ├── skills/zotero-manager/
@@ -55,7 +55,7 @@ Zotero 本地自动化工具集：一个零依赖的 MCP server（25 个工具�
 
 把 `skills/zotero-manager/` 整个目录复制到你的用户级 skills 目录（如 `~/.workbuddy/skills/zotero-manager/`）。Skill 会告诉 Agent 完整的安全工作流：写前备份、两阶段确认、如何核对重复组、如何避免误删附件等。
 
-## 工具一览（25 个）
+## 工具一览（29 个）
 
 **只读**（10 + 2）：`zotero_health`、`zotero_search`、`zotero_get_item`、`zotero_get_children`、`zotero_list_collections`、`zotero_collection_items`、`zotero_list_tags`、`zotero_saved_search_items`、`zotero_export_bibtex`、`zotero_fulltext`、`zotero_find_duplicates`、`zotero_write_status`、`zotero_audit`。
 
@@ -69,6 +69,8 @@ Zotero 本地自动化工具集：一个零依赖的 MCP server（25 个工具�
 | `zotero_prepare_merge` | `zotero_commit_merge` | 合并重复条目（转移子项 + 并集标签/分类） |
 | `zotero_prepare_reassign` | `zotero_commit_reassign` | 调整分类归属 |
 | `zotero_prepare_delete_collection` | `zotero_commit_delete_collection` | 删除空分类 |
+| `zotero_prepare_create_collection` | `zotero_commit_create_collection` | 新建分类（≤50/次，校验重名与父分类） |
+| `zotero_prepare_update_collection` | `zotero_commit_update_collection` | 重命名和/或移动父分类（防循环、防同级重名） |
 | `zotero_cancel_pending` | — | 撤销未提交令牌 |
 
 ## 安全模型

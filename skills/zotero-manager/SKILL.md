@@ -20,7 +20,7 @@ description: |
 5. **核对后再合并**：`find_duplicates` 的分组按 DOI 和规范化标题，**不是语义判重**。标题匹配会误判（曾把 Tang 2019 配到无关 PDF 附件）。合并前逐组核对标题与作者。
 6. **合并保留子项**：合并必须按 Zotero 原生语义——**子项（附件/笔记）全部转移到保留条目，标签与分类取并集**，再删副本。裸 `DELETE` 会丢失附件/笔记。实测曾出现 62 个待删条目中 50 个带 61 个子项的情况。
 
-## 工具清单（25 个）
+## 工具清单（29 个）
 
 ### 只读
 
@@ -46,6 +46,8 @@ description: |
 | `zotero_prepare_merge` | `zotero_commit_merge` | 合并重复条目：转移子项→并集标签/分类→删副本 |
 | `zotero_prepare_reassign` | `zotero_commit_reassign` | 分类归属调整：`from` → `to` |
 | `zotero_prepare_delete_collection` | `zotero_commit_delete_collection` | 删除空分类（预演时校验 numItems/numCollections 均为 0） |
+| `zotero_prepare_create_collection` | `zotero_commit_create_collection` | 新建分类（≤50/次，校验重名与父分类；返回新 key） |
+| `zotero_prepare_update_collection` | `zotero_commit_update_collection` | 重命名和/或移动父分类（校验新父存在、禁止自父/循环、同级重名） |
 | `zotero_cancel_pending` | — | 撤销未提交的令牌 |
 
 ## 标准工作流
@@ -74,6 +76,30 @@ description: |
 6. 核验：两分类条目数变化符合 pureSource，库总数不变
 ```
 
+### 新建分类
+
+```
+1. zotero_list_collections 查看现有分类与层级，确认不会重名
+2. zotero_prepare_create_collection(collections=[{name, parentCollection?}])
+   - parentCollection 省略或 false = 顶级；传 8 位 key = 子分类
+   - 预演自动校验：同级重名、父分类存在；≤50 个/次
+3. 展示计划给用户，取得明确同意
+4. zotero_commit_create_collection(token, CONFIRM:<token>, payloadHash)
+5. 核验：返回的 created[].key 可 GET 到，name 与父分类正确
+```
+
+### 重命名 / 移动分类
+
+```
+1. zotero_prepare_update_collection(key, name?/parentCollection?)
+   - 至少给 name 或 parentCollection 之一
+   - parentCollection: false = 移到顶级
+   - 预演自动校验：新父存在、非自身、非自己后代、同级无重名、确有变更
+2. 展示 current → proposed 给用户，取得明确同意
+3. zotero_commit_update_collection(token, CONFIRM:<token>, payloadHash)
+4. 核验：GET 该分类 name/parentCollection 已变，version 递增
+```
+
 ### 删除空分类
 
 ```
@@ -88,7 +114,9 @@ description: |
 
 - **本地 API 基线**：`http://127.0.0.1:23119`，API v3，仅 loopback，禁止端口转发。需在 Zotero 设置 → 高级勾选"允许此计算机上的其他应用程序与 Zotero 通信"，否则 403。
 - **DELETE 必须带 `If-Unmodified-Since-Version` header**；PATCH 用 body 里的 `version` 字段即可。写请求还需 `Zotero-API-Key` 与 `Zotero-Server-ID`。
-- **写返回**：条目创建 200 + `successful`/`failed` 逐项；PATCH 204；DELETE 204。
+- **写返回**：条目创建 200 + `successful`/`failed` 逐项；PATCH 204；DELETE 204。分类创建返回 200 + `successful`/`failed`，其中 `successful[<index>]` 对象**只含 key 不含 name**，MCP 已用 prepare 的 name 补全；分类更新返回 200。
+- **分类创建/更新**：`POST /collections` body 为数组，需 `Zotero-Write-Token`（每次随机生成），≤50/次；`PATCH /collections/<key>` 可改名与改父，`parentCollection: false` 表示顶级。实测创建→重命名→移动父分类→删除全流程可用。
+- **分类层级**：`parentCollection` 为空/false 即顶级；删分类前必须确认 `numItems=0` 且 `numCollections=0`（有子分类时 API 会拒绝）。
 - **本地版本**：Zotero 10+ 的本地版本号与同步版本解耦，GET 常返回 version=0 或较大本地值；PATCH/DELETE 前务必重新 GET 取当前 version，不要用计划里的旧值。
 - **`/items?q=` 的 q 参数不可靠**：按 DOI 查要用 `qmode=everything`，或直接遍历 `/items?format=json` 自行建索引。
 - **分页 `start` 在同步期间不稳定**：同一轮扫描条目总数可能跳变。判重用 DOI/标题 → key 映射，再数 distinct key，不要用单次分页结果做差集。
